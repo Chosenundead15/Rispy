@@ -2,6 +2,7 @@ use std::{collections::HashMap, io , num::ParseFloatError, fmt};
 
 #[derive(Clone)]
 enum RispyExp {
+    Bool(bool),
     Symbol(String),
     Number(f64),
     List(Vec<RispyExp>),
@@ -15,6 +16,23 @@ enum RispyErr {
 
 struct RispyEnv {
     data: HashMap<String, RispyExp>,
+}
+
+macro_rules! ensure_tonicity {
+    ($check_fn:expr) => {{
+        |args: &[RispyExp]| -> Result<RispyExp, RispyErr> {
+            let floats = parse_list_of_floats(args)?;
+            let first = floats.first().ok_or(RispyErr::Reason("expected at least one number".to_string()))?;
+            let rest = &floats[1..];
+            fn f(prev: &f64, xs: &[f64]) -> bool {
+                match xs.first() {
+                    Some(x) => $check_fn(prev, x) &&  f(x, &xs[1..]),
+                    None => true,
+                }
+            };
+            Ok(RispyExp::Bool(f(first, rest)))
+        }
+    }};
 }
 
 fn tokenize(expr: String) -> Vec<String> {
@@ -56,10 +74,16 @@ fn read_seq<'a>(tokens: &'a [String]) -> Result<(RispyExp, &'a [String]), RispyE
 }
 
 fn parse_atom(token: &str) -> RispyExp {
-    let potential_float: Result<f64, ParseFloatError> = token.parse();
-    match potential_float {
-        Ok(v) => RispyExp::Number(v),
-        Err(_) => RispyExp::Symbol(token.to_string().clone())
+    match token.as_ref() {
+        "true" => RispyExp::Bool(true),
+        "false" => RispyExp::Bool(false),
+        _ => {
+            let potential_float: Result<f64, ParseFloatError> = token.parse();
+            match potential_float {
+                Ok(v) => RispyExp::Number(v),
+                Err(_) => RispyExp::Symbol(token.to_string().clone())
+            }
+        }
     }
 }
 
@@ -89,6 +113,31 @@ fn default_env() -> RispyEnv {
         )
     );
 
+    data.insert(
+        "=".to_string(),
+        RispyExp::Func(ensure_tonicity!(|a, b| a == b))
+    );
+
+    data.insert(
+        ">".to_string(),
+        RispyExp::Func(ensure_tonicity!(|a, b| a > b))
+    );
+
+    data.insert(
+        ">=".to_string(),
+        RispyExp::Func(ensure_tonicity!(|a, b| a >= b))
+    );
+
+    data.insert(
+        "<".to_string(),
+        RispyExp::Func(ensure_tonicity!(|a, b| a < b))
+    );
+
+    data.insert(
+        "<=".to_string(),
+        RispyExp::Func(ensure_tonicity!(|a, b| a <= b))
+    );
+
     RispyEnv {data}
 }
 
@@ -116,6 +165,7 @@ fn eval(exp: &RispyExp, env: &mut RispyEnv) -> Result<RispyExp, RispyErr> {
         .map(|x| x.clone())
     
         ,
+        RispyExp::Bool(_a) => Ok(exp.clone()),
         RispyExp::Number(_a) => Ok(exp.clone()),
         RispyExp::List(list) => {
             let first_form = list
@@ -146,6 +196,7 @@ fn eval(exp: &RispyExp, env: &mut RispyEnv) -> Result<RispyExp, RispyErr> {
 impl fmt::Display for RispyExp {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let str = match self {
+            RispyExp::Bool(a) => a.to_string(),
             RispyExp::Symbol(s) => s.clone(),
             RispyExp::Number(n) => n.to_string(),
             RispyExp::List(list) => {
@@ -166,27 +217,27 @@ fn parse_eval(expr: String, env: &mut RispyEnv) -> Result<RispyExp, RispyErr> {
     let evaled_exp = eval(&parsed_exp, env)?;
     
     Ok(evaled_exp)
-  }
+}
   
-  fn slurp_expr() -> String {
+fn slurp_expr() -> String {
     let mut expr = String::new();
     
     io::stdin().read_line(&mut expr)
       .expect("Failed to read line");
     
     expr
-  }
+}
   
-  fn main() {
+fn main() {
     let env = &mut default_env();
     loop {
-      println!("rispy >");
-      let expr = slurp_expr();
-      match parse_eval(expr, env) {
-        Ok(res) => println!("//  => {}", res),
-        Err(e) => match e {
-          RispyErr::Reason(msg) => println!("//  => {}", msg),
-        },
-      }
+        println!("rispy >");
+        let expr = slurp_expr();
+        match parse_eval(expr, env) {
+            Ok(res) => println!("//  => {}", res),
+            Err(e) => match e {
+                RispyErr::Reason(msg) => println!("//  => {}", msg),
+            },
+        }
     }
-  }
+}
